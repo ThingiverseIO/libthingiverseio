@@ -37,8 +37,8 @@ To compile it from source, do the following:
 * Execute `./configure`
 * Open the file `Makefile` with a text editor, search for '-Werror' and remove it, save
 * Execute `Make`
-* a folder named `.libs` is created, from there copy `libzmq.dll.a` to the folder `c:\rubydevkit\lib` and `libzmq.dll` to the folder `c:\rubydevkit\bin`  
-* copy the content of the folder `include` to `c:\rubydevkit\include`
+* a folder named `.libs` is created, from there copy `libzmq.dll.a` to the folder `c:\rubydevkit\mingw\x86_64-w64-mingw32\lib` and `libzmq.dll` to the folder `c:\rubydevkit\bin`  
+* copy the content of the folder `include` to `c:\rubydevkit\mingw\x86_64-w64-mingw32\include`
 * execute `c:\rubydevkit\devkitvars.bat` or add `c:\rubydevkit\bin` to your PATH manually
 
 
@@ -49,3 +49,5 @@ After ZeroMQ is installed, navigate to the libthingiverseio folder and execute
 After this, you can located the DLL in the folder `bin`. To test, execute 
 
     test.bat
+
+To use the DLL, will need in addition to `libzmq.dll` the libraries `libgcc_s_sjlj-1.dll` and `libstdc++-6.dll` from the folder `c:\rubydevkit\mingw\bin`. Either have them in your PATH or put all 4 DLLs next to application executable.
