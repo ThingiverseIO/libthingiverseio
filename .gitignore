@@ -1,3 +1,8 @@
+*.swp
+
+# Generated Header
+tvio.h
+
 # Object files
 *.o
 *.ko
