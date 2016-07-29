@@ -1,0 +1,2 @@
+# libthingiverseio
+ThingiverseIO shared library
