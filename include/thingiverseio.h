@@ -1,6 +1,7 @@
 /**
  * @author Joern Weissenborn
  * @brief Shared library for ThingiverseIO.
+ * @file thingiverseio.h
  */
 
 

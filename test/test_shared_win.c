@@ -2,19 +2,19 @@
 #include "thingiverseio.h"
 #include <windows.h>
 
-  char * const DESCRIPTOR = "func SayHello(Greeting string) (Answer string)  ";
+char * const DESCRIPTOR = "func SayHello(Greeting string) (Answer string)  ";
 
-  int main() {
+int main() {
 
-    printf("Testing Input Creation...\n");
+	printf("Testing Input Creation...\n");
 
-    int input = tvio_new_input(DESCRIPTOR);
+	int input = tvio_new_input(DESCRIPTOR);
 
 	if (input == -1) {
 		printf("FAIL\n");
 		return 1;
 	};
-	printf("SUCCES\n");
+	printf("SUCCESS\n");
 
 	printf("Testing Output Creation...\n");
 
@@ -37,7 +37,7 @@
 		return 1;
 	};
 
-	printf("SUCCES\n");
+	printf("SUCCESS\n");
 
 	printf("Testing Call...\n");
 
@@ -129,7 +129,7 @@
 		return 1;
 	};
 
-	printf("SUCCES\n");
+	printf("SUCCESS\n");
 
 	printf("Testing Trigger...\n");
 
@@ -197,7 +197,7 @@
 		printf("FAIL, tvio_remove_input err not 0\n");
 		return 1;
 	};
-	printf("SUCCES\n");
+	printf("SUCCESS\n");
 
 	return 0;
 }
