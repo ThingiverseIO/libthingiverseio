@@ -1,3 +1,6 @@
+/** @example output.c
+ * Example showing a ThingiverseIO Output.
+ */
 #include "thingiverseio.h"
 #include <unistd.h>
 #include <stdio.h>

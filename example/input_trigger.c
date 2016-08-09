@@ -1,5 +1,6 @@
-
-
+/** @example input_trigger.c
+ * Example showing a ThingiverseIO TRIGGER.
+ */
 #include "thingiverseio.h"
 #include <stdio.h>
 #include <unistd.h>

@@ -1,4 +1,6 @@
-
+/** @example input_call.c
+ * Example showing a ThingiverseIO CALL.
+ */
 #include "thingiverseio.h"
 #include <stdio.h>
 #include <unistd.h>
