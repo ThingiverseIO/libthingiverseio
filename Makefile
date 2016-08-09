@@ -1,6 +1,6 @@
 all: libthingiverseio.so
 
-.PHONY: all test clean
+.PHONY: all test clean doc
 
 test:
 	mkdir -p _test
@@ -24,6 +24,10 @@ install:
 	cp bin/lib* /usr/lib/
 	cp include/* /usr/include/
 	ldconfig
+
+doc:
+	rm -rf doc/html/*
+	doxygen
 
 clean:
 	rm -rf build

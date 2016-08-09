@@ -275,8 +275,8 @@ extern int tvio_request_available(int output, int* is);
  * @brief Retrieves the UUID of the next available request.
  *
  * @param output The output reference.
- * @param uuid A pointer which will be set to the requests UUID.
- * @param uuid_size The size of the UUID.
+ * @param id A pointer which will be set to the requests UUID.
+ * @param id_size The size of the UUID.
  *
  * @return error
  */
@@ -297,6 +297,7 @@ extern int tvio_retrieve_request_function(int output, char* id, char** function,
  * @brief Retrieves the MsgPack serialized parameters of a request.
  *
  * @param output The output reference.
+ * @param id The request UUID.
  * @param params A pointer which will be set to the parameters of the request.
  * @param params_size A pointer which will be set to size of the request parameters.
  *
