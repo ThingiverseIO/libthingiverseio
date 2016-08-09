@@ -1,0 +1,43 @@
+language: go
+
+go:
+  - 1.5
+  - 1.6
+  - tip
+
+matrix:
+  allow_failures:
+    - go: tip
+
+before_install:
+  - sudo apt-get update -y
+  - sudo apt-get install -y make git libtool build-essential dh-autoreconf pkg-config mercurial dh-autoreconf doxygen
+
+install:
+  - wget https://github.com/zeromq/zeromq4-1/releases/download/v4.1.5/zeromq-4.1.5.tar.gz
+  - tar -xf zeromq-4.1.5.tar.gz
+  - cd zeromq-4.1.4
+  - ./autogen.sh
+  - ./configure
+  - make
+  - sudo make install
+  - sudo ldconfig
+  - cd ..
+
+script:
+  - make
+  - sudo make install
+  - export THINGIVERSEIO_LOGGING=stdout
+  - export THINGIVERSEIO_DEBUG=true
+  - make test
+
+after_success:
+  - mkdir -p doc/html
+  - git clone -b gh-pages https://github.com/ThingiverseIO/libthingiverseio.git --single-branch doc/html/
+  - make doc
+  - cd doc/html
+  - git add .
+  - git config user.name "Documentation Builder"
+  - git config user.email "travis@thingiverse.io"
+  - git commit -m "Automated documentation build for changeset $(git rev-parse --verify HEAD)."
+  - git push origin gh-pages
