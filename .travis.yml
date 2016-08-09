@@ -12,6 +12,7 @@ matrix:
 before_install:
   - sudo apt-get update -y
   - sudo apt-get install -y make git libtool build-essential dh-autoreconf pkg-config mercurial dh-autoreconf doxygen
+  - openssl aes-256-cbc -K $encrypted_c998de5db475_key -iv $encrypted_c998de5db475_iv -in travisci_rsa.enc -out travisci_rsa -d
 
 install:
   - wget https://github.com/zeromq/zeromq4-1/releases/download/v4.1.5/zeromq-4.1.5.tar.gz
