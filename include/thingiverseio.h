@@ -107,52 +107,52 @@ extern int tvio_stop_listen(int input, char* function);
  *
  * @param input
  * @param function Name of the function.
- * @param params A pointer to the MsgPack serialized parameters.
- * @param params_size Size of the serialized parameters.
+ * @param fparams A pointer to the MsgPack serialized parameters.
+ * @param fparams_size Size of the serialized parameters.
  * @param id A pointer which will be set to requests UUID.
  * @param id_size Size of the requests UUID.
  *
  * @return error
  */
-extern int tvio_call(int input, char* function, void* params, int params_size, char** id, int* id_size);
+extern int tvio_call(int input, char* function, void* fparams, int fparams_size, char** id, int* id_size);
 
 /**
  * @brief Executes a ThingiverseIO CALL-ALL. WARNING: Function implementation is inclomete.
  *
  * @param input The input reference.
  * @param function Name of the function.
- * @param params A pointer to the MsgPack serialized parameters.
- * @param params_size Size of the serialized parameters.
+ * @param fparams A pointer to the MsgPack serialized parameters.
+ * @param fparams_size Size of the serialized parameters.
  * @param id A pointer which will be set to requests UUID.
  * @param id_size Size of the requests UUID.
  *
  * @return error
  */
-extern int tvio_call_all(int input, char* function, void* params, int params_size, char** id, int* id_size);
+extern int tvio_call_all(int input, char* function, void* fparams, int fparams_size, char** id, int* id_size);
 
 /**
  * @brief Executes a ThingiverseIO TRIGGER.
  *
  * @param input The input reference.
  * @param function Name of the function.
- * @param params A pointer to the MsgPack serialized parameters.
- * @param params_size Size of the serialized parameters.
+ * @param fparams A pointer to the MsgPack serialized parameters.
+ * @param fparams_size Size of the serialized parameters.
  *
  * @return error
  */
-extern int tvio_trigger(int input, char* function, void* params, int params_size);
+extern int tvio_trigger(int input, char* function, void* fparams, int fparams_size);
 
 /**
  * @brief Executes a ThingiverseIO TRIGGER-ALL.
  *
  * @param input The input reference.
  * @param function Name of the function.
- * @param params A pointer to the MsgPack serialized parameters.
- * @param params_size Size of the serialized parameters.
+ * @param fparams A pointer to the MsgPack serialized parameters.
+ * @param fparams_size Size of the serialized parameters.
  *
  * @return error
  */
-extern int tvio_trigger_all(int input, char* function, void* params, int params_size);
+extern int tvio_trigger_all(int input, char* function, void* fparams, int fparams_size);
 
 /**
  * @brief Checks if the result for an request has arrived.
@@ -310,12 +310,12 @@ extern int tvio_retrieve_request_params(int output, char* id, void** params, int
  *
  * @param output The output reference.
  * @param id The UUID of the request to reply to.
- * @param params A pointer to the MsgPack serialized parameters.
- * @param params_size Size of the serialized parameters.
+ * @param rparams A pointer to the MsgPack serialized parameters.
+ * @param rparams_size Size of the serialized parameters.
  *
  * @return error
  */
-extern int tvio_reply(int output, char* id, void* params, int params_size);
+extern int tvio_reply(int output, char* id, void* rparams, int rparams_size);
 
 /**
  * @brief Executes ThingiverseIO EMIT.
