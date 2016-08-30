@@ -124,7 +124,7 @@ func start_listen(i C.int, function *C.char) C.int {
 	inputsLock.RLock()
 	defer inputsLock.RUnlock()
 	if in, ok := inputs[int(i)]; ok {
-		in.Listen(C.GoString(function))
+		in.StartListen(C.GoString(function))
 		return C.int(0)
 	}
 	return ERR_INVALID_INPUT

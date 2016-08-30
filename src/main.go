@@ -32,12 +32,13 @@ func check_descriptor(desc *C.char, result **C.char, result_size *C.int) {
 }
 
 func getParams(parameter unsafe.Pointer, parameter_size C.int) (params []byte) {
-	params = make([]byte, parameter_size)
+	params = C.GoBytes(parameter, parameter_size)
+	/*params = make([]byte, parameter_size)
 	if parameter_size > 0 {
 		cparams := []byte(C.GoStringN((*C.char)(parameter), parameter_size))
 		for i, b := range cparams {
 			params[i] = b
 		}
-	}
+	}*/
 	return
 }
