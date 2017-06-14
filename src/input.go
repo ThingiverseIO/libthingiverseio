@@ -1,4 +1,19 @@
-//	along with libaursir.  If not, see <http://www.gnu.org/licenses/>.
+//	Copyright (c) 2015 Joern Weissenborn
+//
+//	This file is part of libthingiverseio.
+//
+//	Foobar is free software: you can redistribute it and/or modify
+//	it under the terms of the GNU General Public License as published by
+//	the Free Software Foundation, either version 3 of the License, or
+//	(at your option) any later version.
+//
+//	libaursir is distributed in the hope that it will be useful,
+//	but WITHOUT ANY WARRANTY; without even the implied warranty of
+//	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+//	GNU General Public License for more details.
+//
+//	You should have received a copy of the GNU General Public License
+//	along with libthingiverseio.  If not, see <http://www.gnu.org/licenses/>.
 
 package main
 
@@ -8,359 +23,934 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/ThingiverseIO/thingiverseio"
 	"github.com/ThingiverseIO/thingiverseio/config"
-	"github.com/ThingiverseIO/thingiverseio/service/messages"
+	"github.com/ThingiverseIO/thingiverseio/core"
+	"github.com/ThingiverseIO/thingiverseio/descriptor"
+	"github.com/ThingiverseIO/thingiverseio/message"
+	"github.com/ThingiverseIO/thingiverseio/uuid"
+	"github.com/joernweissenborn/eventual2go"
 )
 
-var nextInput = 0
+type propertyChange struct {
+	name  string
+	value []byte
+}
 
-var inputs = map[int]*thingiverseio.Input{}
-var inputsLock = &sync.RWMutex{}
+func toPropertyChange(name string) eventual2go.Transformer {
+	return func(d eventual2go.Data) eventual2go.Data {
+		return propertyChange{
+			name:  name,
+			value: d.([]byte),
+		}
+	}
+}
 
-var request = map[int]map[config.UUID]*messages.ResultFuture{}
-var requestLock = &sync.RWMutex{}
+type input struct {
+	m               *sync.RWMutex
+	c               core.InputCore
+	results         map[uuid.UUID]*message.ResultFuture
+	callall         map[uuid.UUID]*message.ResultCollector
+	listen          *message.ResultCollector
+	propertyChanges *eventual2go.Collector
+	propertyUpdates map[string]*eventual2go.Future
+}
 
-var listenResults = map[int]*messages.ResultCollector{}
-var listenResultsLock = &sync.RWMutex{}
-
-var callAllResults = map[int]map[config.UUID]*messages.ResultCollector{}
-var callAllResultsLock = &sync.RWMutex{}
-
-func getNextInput() (n int) {
-	n = nextInput
-	nextInput++
+func newInput(desc string) (i *input, err C.int) {
+	d, derr := descriptor.Parse(desc)
+	if derr != nil {
+		err = ERR_INVALID_DESCRIPTOR.asInt()
+		return
+	}
+	cfg := config.Configure()
+	tracker, provider := core.DefaultBackends()
+	c, nerr := core.NewInputCore(d, cfg, tracker, provider...)
+	if nerr != nil {
+		err = ERR_NETWORK.asInt()
+		return
+	}
+	i = &input{
+		m:               &sync.RWMutex{},
+		c:               c,
+		results:         map[uuid.UUID]*message.ResultFuture{},
+		callall:         map[uuid.UUID]*message.ResultCollector{},
+		listen:          message.NewResultCollector(),
+		propertyChanges: eventual2go.NewCollector(),
+		propertyUpdates: map[string]*eventual2go.Future{},
+	}
+	for _, p := range c.Properties() {
+		o, _ := c.GetProperty(p)
+		i.propertyChanges.AddStream(o.Stream().Transform(toPropertyChange(p)))
+	}
+	i.listen.AddStream(c.ListenStream())
+	i.c.Run()
 	return
 }
 
-func newInput(desc string) (n int) {
-	inputsLock.Lock()
-	defer inputsLock.Unlock()
-	requestLock.Lock()
-	defer requestLock.Unlock()
-	listenResultsLock.Lock()
-	defer listenResultsLock.Unlock()
-	n = getNextInput()
-	i, err := thingiverseio.NewInput(desc)
-	if err != nil {
-		return -1
-	}
-	inputs[n] = i
-	request[n] = map[config.UUID]*messages.ResultFuture{}
-	listenResults[n] = messages.NewResultCollector()
-	listenResults[n].AddStream(i.ListenResults())
-	i.Run()
+type inputRegister struct {
+	n        int
+	m        *sync.RWMutex
+	register map[C.int]*input
+}
+
+func (i *inputRegister) next() (n int) {
+	n = i.n
+	i.n++
 	return
+}
+
+func (i *inputRegister) new(desc string) (idOrErr C.int) {
+	i.m.Lock()
+	defer i.m.Unlock()
+	in, idOrErr := newInput(desc)
+	if idOrErr != NO_ERR.asInt() {
+		return
+	}
+	idOrErr = C.int(i.next())
+	i.register[idOrErr] = in
+	return
+}
+
+func (i *inputRegister) connected(id C.int) (is bool, err C.int) {
+	i.m.RLock()
+	defer i.m.RUnlock()
+	in, ok := i.register[id]
+	if !ok {
+		err = ERR_INVALID_INPUT.asInt()
+		return
+	}
+	is = in.c.Connected()
+	return
+}
+
+func (i *inputRegister) iface(id C.int) (iface string, err C.int) {
+	i.m.RLock()
+	defer i.m.RUnlock()
+	in, ok := i.register[id]
+	if !ok {
+		err = ERR_INVALID_INPUT.asInt()
+		return
+	}
+	iface = in.c.Interface()
+	return
+}
+
+func (i *inputRegister) uuid(id C.int) (iID uuid.UUID, err C.int) {
+	i.m.RLock()
+	defer i.m.RUnlock()
+	in, ok := i.register[id]
+	if !ok {
+		err = ERR_INVALID_INPUT.asInt()
+		return
+	}
+	iID = in.c.UUID()
+	return
+}
+
+func (i *inputRegister) remove(id C.int) (err C.int) {
+	i.m.Lock()
+	defer i.m.Unlock()
+	in, ok := i.register[id]
+	if !ok {
+		err = ERR_INVALID_INPUT.asInt()
+		return
+	}
+	in.c.Shutdown()
+	delete(i.register, id)
+	return
+}
+
+func (i *inputRegister) startListen(id C.int, function string) (err C.int) {
+	i.m.RLock()
+	defer i.m.RUnlock()
+	in, ok := i.register[id]
+	if !ok {
+		err = ERR_INVALID_INPUT.asInt()
+		return
+	}
+	ferr := in.c.StartListen(function)
+	if ferr != nil {
+		err = ERR_INVALID_FUNCTION.asInt()
+	}
+	return
+}
+
+func (i *inputRegister) stopListen(id C.int, function string) (err C.int) {
+	i.m.RLock()
+	defer i.m.RUnlock()
+	in, ok := i.register[id]
+	if !ok {
+		err = ERR_INVALID_INPUT.asInt()
+		return
+	}
+	ferr := in.c.StopListen(function)
+	if ferr != nil {
+		err = ERR_INVALID_FUNCTION.asInt()
+	}
+	return
+}
+
+func (i *inputRegister) startObserve(id C.int, property string) (err C.int) {
+	i.m.RLock()
+	defer i.m.RUnlock()
+	in, ok := i.register[id]
+	if !ok {
+		err = ERR_INVALID_INPUT.asInt()
+		return
+	}
+	ferr := in.c.StartObservation(property)
+	if ferr != nil {
+		err = ERR_INVALID_PROPERTY.asInt()
+	}
+	return
+}
+
+func (i *inputRegister) stopObserve(id C.int, property string) (err C.int) {
+	i.m.RLock()
+	defer i.m.RUnlock()
+	in, ok := i.register[id]
+	if !ok {
+		err = ERR_INVALID_INPUT.asInt()
+		return
+	}
+	ferr := in.c.StopObservation(property)
+	if ferr != nil {
+		err = ERR_INVALID_PROPERTY.asInt()
+	}
+	return
+}
+
+func (i *inputRegister) propertyChanged(id C.int) (is bool, err C.int) {
+	i.m.RLock()
+	defer i.m.RUnlock()
+	in, ok := i.register[id]
+	if !ok {
+		err = ERR_INVALID_INPUT.asInt()
+		return
+	}
+	in.m.Lock()
+	defer in.m.Unlock()
+	is = !in.propertyChanges.Empty()
+	return
+}
+
+func (i *inputRegister) nextChangeProperty(id C.int) (property string, err C.int) {
+	i.m.RLock()
+	defer i.m.RUnlock()
+	in, ok := i.register[id]
+	if !ok {
+		err = ERR_INVALID_INPUT.asInt()
+		return
+	}
+	in.m.Lock()
+	defer in.m.Unlock()
+	if in.propertyChanges.Empty() {
+		err = ERR_NO_UPDATE.asInt()
+	}
+	property = in.propertyChanges.Preview().(propertyChange).name
+	return
+}
+
+func (i *inputRegister) nextChangeValue(id C.int) (value []byte, err C.int) {
+	i.m.RLock()
+	defer i.m.RUnlock()
+	in, ok := i.register[id]
+	if !ok {
+		err = ERR_INVALID_INPUT.asInt()
+		return
+	}
+	in.m.Lock()
+	defer in.m.Unlock()
+	if in.propertyChanges.Empty() {
+		err = ERR_NO_UPDATE.asInt()
+	}
+	value = in.propertyChanges.Preview().(propertyChange).value
+	return
+}
+
+func (i *inputRegister) clearNextChange(id C.int) (err C.int) {
+	i.m.RLock()
+	defer i.m.RUnlock()
+	in, ok := i.register[id]
+	if !ok {
+		err = ERR_INVALID_INPUT.asInt()
+		return
+	}
+	in.m.Lock()
+	defer in.m.Unlock()
+	if in.propertyChanges.Empty() {
+		err = ERR_NO_UPDATE.asInt()
+	}
+	in.propertyChanges.Get()
+	return
+}
+
+func (i *inputRegister) updateProperty(id C.int, property string) (err C.int) {
+	i.m.RLock()
+	defer i.m.RUnlock()
+	in, ok := i.register[id]
+	if !ok {
+		err = ERR_INVALID_INPUT.asInt()
+		return
+	}
+	in.m.Lock()
+	defer in.m.Unlock()
+	if f, ok := in.propertyUpdates[property]; ok {
+		if !f.Completed() {
+			return
+		}
+	}
+	p, ferr := in.c.UpdateProperty(property)
+	if ferr != nil {
+		err = ERR_INVALID_PROPERTY.asInt()
+	}
+	in.propertyUpdates[property] = p
+	return
+}
+
+func (i *inputRegister) propertyUpdateAvailable(id C.int, property string) (is bool, err C.int) {
+	i.m.RLock()
+	defer i.m.RUnlock()
+	in, ok := i.register[id]
+	if !ok {
+		err = ERR_INVALID_INPUT.asInt()
+		return
+	}
+
+	in.m.RLock()
+	defer in.m.RUnlock()
+	p, is := in.propertyUpdates[property]
+	if !is {
+		return
+	}
+	is = p.Completed()
+	return
+}
+
+func (i *inputRegister) getPropertyUpdate(id C.int, property string) (value []byte, err C.int) {
+	i.m.RLock()
+	defer i.m.RUnlock()
+	in, ok := i.register[id]
+	if !ok {
+		err = ERR_INVALID_INPUT.asInt()
+		return
+	}
+	in.m.Lock()
+	defer in.m.Unlock()
+	p, is := in.propertyUpdates[property]
+	if !is {
+		err = ERR_NO_UPDATE.asInt()
+		return
+	}
+	if !p.Completed() {
+		err = ERR_NO_UPDATE.asInt()
+		return
+	}
+	value = p.Result().([]byte)
+	delete(in.propertyUpdates, property)
+	return
+}
+
+func (i *inputRegister) getProperty(id C.int, property string) (value []byte, err C.int) {
+	i.m.RLock()
+	defer i.m.RUnlock()
+	in, ok := i.register[id]
+	if !ok {
+		err = ERR_INVALID_INPUT.asInt()
+		return
+	}
+	p, ferr := in.c.GetProperty(property)
+	if ferr != nil {
+		err = ERR_INVALID_PROPERTY.asInt()
+	}
+	value = p.Value().([]byte)
+	return
+}
+
+func (i *inputRegister) call(id C.int, function string, params []byte) (resID uuid.UUID, err C.int) {
+	i.m.RLock()
+	defer i.m.RUnlock()
+	in, ok := i.register[id]
+	if !ok {
+		err = ERR_INVALID_INPUT.asInt()
+		return
+	}
+	res, _, resID, ferr := in.c.Request(function, message.CALL, params)
+	if ferr != nil {
+		err = ERR_INVALID_FUNCTION.asInt()
+		return
+	}
+	in.m.Lock()
+	defer in.m.Unlock()
+	in.results[resID] = res
+	return
+}
+
+func (i *inputRegister) callAll(id C.int, function string, params []byte) (resID uuid.UUID, err C.int) {
+	i.m.RLock()
+	defer i.m.RUnlock()
+	in, ok := i.register[id]
+	if !ok {
+		err = ERR_INVALID_INPUT.asInt()
+		return
+	}
+	_, res, resID, ferr := in.c.Request(function, message.CALLALL, params)
+	if ferr != nil {
+		err = ERR_INVALID_FUNCTION.asInt()
+		return
+	}
+	in.m.Lock()
+	defer in.m.Unlock()
+	in.callall[resID] = message.NewResultCollector()
+	in.callall[resID].AddStream(res)
+	res.CloseOnFuture(in.callall[resID].Removed())
+	return
+}
+
+func (i *inputRegister) trigger(id C.int, function string, params []byte) (err C.int) {
+	i.m.RLock()
+	defer i.m.RUnlock()
+	in, ok := i.register[id]
+	if !ok {
+		err = ERR_INVALID_INPUT.asInt()
+		return
+	}
+	_, _, _, ferr := in.c.Request(function, message.TRIGGER, params)
+	if ferr != nil {
+		err = ERR_INVALID_FUNCTION.asInt()
+		return
+	}
+	return
+}
+
+func (i *inputRegister) triggerAll(id C.int, function string, params []byte) (err C.int) {
+	i.m.RLock()
+	defer i.m.RUnlock()
+	in, ok := i.register[id]
+	if !ok {
+		err = ERR_INVALID_INPUT.asInt()
+		return
+	}
+	_, _, _, ferr := in.c.Request(function, message.TRIGGERALL, params)
+	if ferr != nil {
+		err = ERR_INVALID_FUNCTION.asInt()
+		return
+	}
+	return
+}
+
+func (i *inputRegister) resultReady(id C.int, resID uuid.UUID) (ready bool, err C.int) {
+
+	i.m.RLock()
+	defer i.m.RUnlock()
+	in, ok := i.register[id]
+	if !ok {
+		err = ERR_INVALID_INPUT.asInt()
+		return
+	}
+
+	in.m.RLock()
+	defer in.m.RUnlock()
+	req, ok := in.results[resID]
+	if !ok {
+		err = ERR_INVALID_RESULT_ID.asInt()
+		return
+	}
+	ready = req.Completed()
+	return
+
+}
+
+func (i *inputRegister) resultParameter(id C.int, resID uuid.UUID) (params []byte, err C.int) {
+
+	i.m.RLock()
+	defer i.m.RUnlock()
+	in, ok := i.register[id]
+	if !ok {
+		err = ERR_INVALID_INPUT.asInt()
+		return
+	}
+
+	in.m.Lock()
+	defer in.m.Unlock()
+	req, ok := in.results[resID]
+	if !ok {
+		err = ERR_INVALID_RESULT_ID.asInt()
+		return
+	}
+	if !req.Completed() {
+		err = ERR_RESULT_NOT_ARRIVED.asInt()
+		return
+	}
+	params = req.Result().Parameter()
+	delete(in.results, resID)
+	return
+
+}
+
+func (i *inputRegister) listenResultAvailable(id C.int) (is bool, err C.int) {
+
+	i.m.RLock()
+	defer i.m.RUnlock()
+	in, ok := i.register[id]
+	if !ok {
+		err = ERR_INVALID_INPUT.asInt()
+		return
+	}
+
+	is = !in.listen.Empty()
+	return
+
+}
+
+func (i *inputRegister) nextListenResultUUID(id C.int) (resID uuid.UUID, err C.int) {
+
+	i.m.RLock()
+	defer i.m.RUnlock()
+	in, ok := i.register[id]
+	if !ok {
+		err = ERR_INVALID_INPUT.asInt()
+		return
+	}
+
+	if in.listen.Empty() {
+		err = ERR_NO_RESULT_AVAILABLE.asInt()
+		return
+	}
+	resID = in.listen.Preview().Request.UUID
+	return
+}
+
+func (i *inputRegister) nextListenResultFunction(id C.int) (function string, err C.int) {
+	i.m.RLock()
+	defer i.m.RUnlock()
+	in, ok := i.register[id]
+	if !ok {
+		err = ERR_INVALID_INPUT.asInt()
+		return
+	}
+	if in.listen.Empty() {
+		err = ERR_NO_RESULT_AVAILABLE.asInt()
+		return
+	}
+	function = in.listen.Preview().Request.Function
+	return
+}
+
+func (i *inputRegister) nextListenResultRequestParameter(id C.int) (params []byte, err C.int) {
+	i.m.RLock()
+	defer i.m.RUnlock()
+	in, ok := i.register[id]
+	if !ok {
+		err = ERR_INVALID_INPUT.asInt()
+		return
+	}
+	if in.listen.Empty() {
+		err = ERR_NO_RESULT_AVAILABLE.asInt()
+		return
+	}
+	params = in.listen.Preview().Request.Parameter()
+	return
+}
+
+func (i *inputRegister) nextListenResultParameter(id C.int) (params []byte, err C.int) {
+	i.m.RLock()
+	defer i.m.RUnlock()
+	in, ok := i.register[id]
+	if !ok {
+		err = ERR_INVALID_INPUT.asInt()
+		return
+	}
+	if in.listen.Empty() {
+		err = ERR_NO_RESULT_AVAILABLE.asInt()
+		return
+	}
+	params = in.listen.Preview().Parameter()
+	return
+}
+
+func (i *inputRegister) clearListenResult(id C.int) (err C.int) {
+	i.m.RLock()
+	defer i.m.RUnlock()
+	in, ok := i.register[id]
+	if !ok {
+		err = ERR_INVALID_INPUT.asInt()
+		return
+	}
+	if in.listen.Empty() {
+		err = ERR_NO_RESULT_AVAILABLE.asInt()
+		return
+	}
+	in.listen.Get()
+	return
+}
+
+func (i *inputRegister) callAllResultAvailable(id C.int, resID uuid.UUID) (is bool, err C.int) {
+
+	i.m.RLock()
+	defer i.m.RUnlock()
+	in, ok := i.register[id]
+	if !ok {
+		err = ERR_INVALID_INPUT.asInt()
+		return
+	}
+	in.m.RLock()
+	defer in.m.RLock()
+
+	res, ok := in.callall[resID]
+	if !ok {
+		err = ERR_INVALID_RESULT_ID.asInt()
+		return
+	}
+	is = !res.Empty()
+	return
+
+}
+
+func (i *inputRegister) callAllResultParameter(id C.int, resID uuid.UUID) (p []byte, err C.int) {
+
+	i.m.RLock()
+	defer i.m.RUnlock()
+	in, ok := i.register[id]
+	if !ok {
+		err = ERR_INVALID_INPUT.asInt()
+		return
+	}
+	in.m.RLock()
+	defer in.m.RLock()
+
+	res, ok := in.callall[resID]
+	if !ok {
+		err = ERR_INVALID_RESULT_ID.asInt()
+		return
+	}
+	if res.Empty() {
+		err = ERR_NO_RESULT_AVAILABLE.asInt()
+	}
+	p = res.Preview().Parameter()
+
+	return
+
+}
+
+func (i *inputRegister) clearCallAllResult(id C.int, resID uuid.UUID) (err C.int) {
+
+	i.m.RLock()
+	defer i.m.RUnlock()
+	in, ok := i.register[id]
+	if !ok {
+		err = ERR_INVALID_INPUT.asInt()
+		return
+	}
+	in.m.RLock()
+	defer in.m.RLock()
+
+	res, ok := in.callall[resID]
+	if !ok {
+		err = ERR_INVALID_RESULT_ID.asInt()
+		return
+	}
+	res.Get()
+	return
+
+}
+func (i *inputRegister) clearCallAllRequest(id C.int, resID uuid.UUID) (err C.int) {
+
+	i.m.RLock()
+	defer i.m.RUnlock()
+	in, ok := i.register[id]
+	if !ok {
+		err = ERR_INVALID_INPUT.asInt()
+		return
+	}
+	in.m.Lock()
+	defer in.m.Lock()
+
+	res, ok := in.callall[resID]
+	if !ok {
+		err = ERR_INVALID_RESULT_ID.asInt()
+		return
+	}
+	res.Remove()
+	delete(in.callall, resID)
+	return
+
+}
+
+var inputs = inputRegister{
+	m:        &sync.RWMutex{},
+	register: map[C.int]*input{},
 }
 
 //export new_input
 func new_input(descriptor *C.char) (i C.int) {
 	d := C.GoString(descriptor)
-	return C.int(newInput(d))
+	return inputs.new(d)
 }
 
-//export remove_input
-func remove_input(i C.int) C.int {
-	inputsLock.Lock()
-	defer inputsLock.Unlock()
-	requestLock.Lock()
-	defer requestLock.Unlock()
-	listenResultsLock.Lock()
-	defer listenResultsLock.Unlock()
-	callAllResultsLock.Lock()
-	defer callAllResultsLock.Unlock()
-	if in, ok := inputs[int(i)]; ok {
-		in.Remove()
-		delete(request, int(i))
-		delete(listenResults, int(i))
-		delete(callAllResults, int(i))
-		delete(inputs, int(i))
-		return C.int(0)
-	}
-	return ERR_INVALID_INPUT
+//export input_remove
+func input_remove(i C.int) C.int {
+	return inputs.remove(i)
 }
 
-//export connected
-func connected(i C.int, is *C.int) C.int {
-	inputsLock.RLock()
-	defer inputsLock.RUnlock()
-	if in, ok := inputs[int(i)]; ok {
-		if in.HasConnection() {
-			*is = 1
-		} else {
-			*is = 0
-		}
-		return C.int(0)
-	}
-	return ERR_INVALID_INPUT
+//export input_connected
+func input_connected(i C.int, is_p *C.int) C.int {
+	is, err := inputs.connected(i)
+	boolToIntPtr(is, is_p)
+	return err
 }
 
-//export get_input_uuid
-func get_input_uuid(i C.int, uuid **C.char, uuid_size *C.int) C.int {
-	inputsLock.RLock()
-	defer inputsLock.RUnlock()
-	if in, ok := inputs[int(i)]; ok {
-		*uuid = C.CString(string(in.UUID()))
-		*uuid_size = C.int(len(in.UUID()))
-		return C.int(0)
+//export input_uuid
+func input_uuid(i C.int, uuid_p **C.char, uuid_size *C.int) C.int {
+	uuid, err := inputs.uuid(i)
+	if err == 0 {
+		*uuid_p = C.CString(string(uuid))
+		*uuid_size = C.int(len(uuid))
 	}
-	return ERR_INVALID_INPUT
+	return err
 }
 
-//export get_input_interface
-func get_input_interface(i C.int, iface **C.char, iface_size *C.int) C.int {
-	inputsLock.RLock()
-	defer inputsLock.RUnlock()
-	if in, ok := inputs[int(i)]; ok {
-		*iface = C.CString(string(in.Interface()))
-		*iface_size = C.int(len(in.Interface()))
-		return C.int(0)
+//export input_interface
+func input_interface(i C.int, iface_p **C.char, iface_size *C.int) C.int {
+	iface, err := inputs.iface(i)
+	if err == 0 {
+		*iface_p = C.CString(iface)
+		*iface_size = C.int(len(iface))
 	}
-	return ERR_INVALID_INPUT
+	return err
 }
 
-//export start_listen
-func start_listen(i C.int, function *C.char) C.int {
-	inputsLock.RLock()
-	defer inputsLock.RUnlock()
-	if in, ok := inputs[int(i)]; ok {
-		in.StartListen(C.GoString(function))
-		return C.int(0)
+//export input_call
+func input_call(i C.int, function *C.char, params unsafe.Pointer, params_size C.int, request_id **C.char, request_id_size *C.int) C.int {
+	fun := C.GoString(function)
+	paramter := getParams(params, params_size)
+	res_id, err := inputs.call(i, fun, paramter)
+	if err == NO_ERR.asInt() {
+		*request_id = C.CString(string(res_id))
+		*request_id_size = C.int(len(res_id))
 	}
-	return ERR_INVALID_INPUT
+	return err
 }
 
-//export stop_listen
-func stop_listen(i C.int, function *C.char) C.int {
-	inputsLock.RLock()
-	defer inputsLock.RUnlock()
-	if in, ok := inputs[int(i)]; ok {
-		in.StopListen(C.GoString(function))
-		return C.int(0)
+//export input_call_all
+func input_call_all(i C.int, function *C.char, params unsafe.Pointer, params_size C.int, request_id **C.char, request_id_size *C.int) C.int {
+	fun := C.GoString(function)
+	paramter := getParams(params, params_size)
+	res_id, err := inputs.callAll(i, fun, paramter)
+	if err == NO_ERR.asInt() {
+		*request_id = C.CString(string(res_id))
+		*request_id_size = C.int(len(res_id))
 	}
-	return ERR_INVALID_INPUT
+	return err
 }
 
-//export call
-func call(i C.int, function *C.char, parameter unsafe.Pointer, parameter_size C.int, request_id **C.char, request_id_size *C.int) C.int {
-	inputsLock.RLock()
-	defer inputsLock.RUnlock()
-	requestLock.Lock()
-	defer requestLock.Unlock()
-	if in, ok := inputs[int(i)]; ok {
-		fun := C.GoString(function)
-		params := getParams(parameter, parameter_size)
-
-		uuid, f := in.CallBin(fun, params)
-
-		request[int(i)][uuid] = f
-
-		*request_id = C.CString(string(uuid))
-		*request_id_size = C.int(len(uuid))
-		return C.int(0)
-	}
-	return ERR_INVALID_INPUT
+//export input_trigger
+func input_trigger(i C.int, function *C.char, params unsafe.Pointer, params_size C.int) C.int {
+	fun := C.GoString(function)
+	paramter := getParams(params, params_size)
+	err := inputs.trigger(i, fun, paramter)
+	return err
 }
 
-//export call_all
-func call_all(i C.int, function *C.char, parameter unsafe.Pointer, parameter_size C.int, request_id **C.char, request_id_size *C.int) C.int {
-	inputsLock.RLock()
-	defer inputsLock.RUnlock()
-	callAllResultsLock.Lock()
-	defer callAllResultsLock.Unlock()
-	if in, ok := inputs[int(i)]; ok {
-		fun := C.GoString(function)
-		params := getParams(parameter, parameter_size)
-
-		s := messages.NewResultStreamController()
-		c := messages.NewResultCollector()
-		c.AddStream(s.Stream())
-
-		uuid := in.CallAllBin(fun, params, s)
-		callAllResults[int(i)][uuid] = c
-		*request_id = C.CString(string(uuid))
-		*request_id_size = C.int(len(uuid))
-		return C.int(0)
-	}
-	return ERR_INVALID_INPUT
+//export input_trigger_all
+func input_trigger_all(i C.int, function *C.char, params unsafe.Pointer, params_size C.int) C.int {
+	fun := C.GoString(function)
+	paramter := getParams(params, params_size)
+	err := inputs.triggerAll(i, fun, paramter)
+	return err
 }
 
-//export trigger
-func trigger(i C.int, function *C.char, parameter unsafe.Pointer, parameter_size C.int) C.int {
-	inputsLock.RLock()
-	defer inputsLock.RUnlock()
-	if in, ok := inputs[int(i)]; ok {
-		fun := C.GoString(function)
-		params := getParams(parameter, parameter_size)
-		in.TriggerBin(fun, params)
-		return C.int(0)
-	}
-	return ERR_INVALID_INPUT
+//export input_call_result_available
+func input_call_result_available(i C.int, res_id *C.char, ready *C.int) C.int {
+	resID := uuid.UUID(C.GoString(res_id))
+	r, err := inputs.resultReady(i, resID)
+	boolToIntPtr(r, ready)
+	return err
 }
 
-//export trigger_all
-func trigger_all(i C.int, function *C.char, parameter unsafe.Pointer, parameter_size C.int) C.int {
-	inputsLock.RLock()
-	defer inputsLock.RUnlock()
-	if in, ok := inputs[int(i)]; ok {
-		fun := C.GoString(function)
-		params := getParams(parameter, parameter_size)
-		in.TriggerAllBin(fun, params)
-		return C.int(0)
+//export input_call_result_params
+func input_call_result_params(i C.int, res_id *C.char, params *unsafe.Pointer, params_size *C.int) C.int {
+	resID := uuid.UUID(C.GoString(res_id))
+	p, err := inputs.resultParameter(i, resID)
+	if err == NO_ERR.asInt() {
+		*params = unsafe.Pointer(C.CBytes(p))
+		*params_size = C.int(len(p))
 	}
-	return ERR_INVALID_INPUT
+	return err
 }
 
-//export result_ready
-func result_ready(i C.int, uuid *C.char, ready *C.int) C.int {
-	requestLock.RLock()
-	defer requestLock.RUnlock()
-	if request[int(i)] == nil {
-		return ERR_INVALID_INPUT
-	}
-	if f, ok := request[int(i)][config.UUID(C.GoString(uuid))]; ok {
-		if f.Completed() {
-			*ready = 1
-		} else {
-			*ready = 0
-		}
-		return C.int(0)
-	}
-	return ERR_INVALID_RESULT_ID
+//export input_listen_start
+func input_listen_start(i C.int, function *C.char) C.int {
+	return inputs.startListen(i, C.GoString(function))
 }
 
-//export retrieve_result_params
-func retrieve_result_params(i C.int, uuid *C.char, result *unsafe.Pointer, result_size *C.int) C.int {
-	requestLock.Lock()
-	defer requestLock.Unlock()
-	if request[int(i)] == nil {
-		return ERR_INVALID_INPUT
-	}
-	if f, ok := request[int(i)][config.UUID(C.GoString(uuid))]; ok {
-		if !f.Completed() {
-			return ERR_RESULT_NOT_ARRIVED
-		}
-		*result = unsafe.Pointer(C.CString(string(f.GetResult().Parameter())))
-		*result_size = C.int(len(f.GetResult().Parameter()))
-		delete(request[int(i)], config.UUID(C.GoString(uuid)))
-		return C.int(0)
-	}
-	return ERR_INVALID_RESULT_ID
+//export input_listen_stop
+func input_listen_stop(i C.int, function *C.char) C.int {
+	return inputs.stopListen(i, C.GoString(function))
 }
 
-//export listen_result_available
-func listen_result_available(i C.int, is *C.int) C.int {
-	listenResultsLock.RLock()
-	defer listenResultsLock.RUnlock()
-	if res, ok := listenResults[int(i)]; ok {
-		if res.Empty() {
-			*is = 0
-		} else {
-			*is = 1
-		}
-		return C.int(0)
-	}
-	return ERR_INVALID_INPUT
+//export input_listen_result_available
+func input_listen_result_available(i C.int, is_p *C.int) C.int {
+	is, err := inputs.listenResultAvailable(i)
+	boolToIntPtr(is, is_p)
+	return err
 }
 
-//export retrieve_listen_result_id
-func retrieve_listen_result_id(i C.int, request_id **C.char, request_id_size *C.int) C.int {
-	listenResultsLock.RLock()
-	defer listenResultsLock.RUnlock()
-	if res, ok := listenResults[int(i)]; ok {
-		if res.Empty() {
-			return ERR_NO_RESULT_AVAILABLE
-		} else {
-			uuid := res.Preview().Request.UUID
-			*request_id = C.CString(string(uuid))
-			*request_id_size = C.int(len(uuid))
-			return C.int(0)
-		}
+//export input_listen_result_id
+func input_listen_result_id(i C.int, result_id **C.char, result_id_size *C.int) C.int {
+	resID, err := inputs.nextListenResultUUID(i)
+	if err == NO_ERR.asInt() {
+		*result_id = C.CString(string(resID))
+		*result_id_size = C.int(len(resID))
 	}
-	return ERR_INVALID_INPUT
+	return err
 }
 
-//export retrieve_listen_result_function
-func retrieve_listen_result_function(i C.int, function **C.char, function_size *C.int) C.int {
-	listenResultsLock.RLock()
-	defer listenResultsLock.RUnlock()
-	if res, ok := listenResults[int(i)]; ok {
-		if res.Empty() {
-			return ERR_NO_RESULT_AVAILABLE
-		} else {
-			fun := res.Preview().Request.Function
-			*function = C.CString(fun)
-			*function_size = C.int(len(fun))
-			return C.int(0)
-		}
+//export input_listen_result_function
+func input_listen_result_function(i C.int, function **C.char, function_size *C.int) C.int {
+	fun, err := inputs.nextListenResultFunction(i)
+	if err == NO_ERR.asInt() {
+		*function = C.CString(fun)
+		*function_size = C.int(len(fun))
 	}
-	return ERR_INVALID_INPUT
+	return err
 }
 
-//Nexport retrieve_listen_result_request_params
-//TODO: rework scheme of getting request parameter
-func retrieve_listen_result_request_params(i C.int, params *unsafe.Pointer, params_size *C.int) C.int {
-	listenResultsLock.RLock()
-	defer listenResultsLock.RUnlock()
-	if res, ok := listenResults[int(i)]; ok {
-		if res.Empty() {
-			return ERR_NO_RESULT_AVAILABLE
-		} else {
-			p := res.Preview().Request.Parameter()
-			*params = unsafe.Pointer(C.CString(string(p)))
-			*params_size = C.int(len(p))
-			return C.int(0)
-		}
+//export input_listen_result_request_params
+func input_listen_result_request_params(i C.int, params *unsafe.Pointer, params_size *C.int) C.int {
+	p, err := inputs.nextListenResultRequestParameter(i)
+	if err == NO_ERR.asInt() {
+		*params = unsafe.Pointer(C.CBytes(p))
+		*params_size = C.int(len(p))
 	}
-	return ERR_INVALID_INPUT
+	return err
 }
 
-//export retrieve_listen_result_params
-func retrieve_listen_result_params(i C.int, params *unsafe.Pointer, params_size *C.int) C.int {
-	listenResultsLock.RLock()
-	defer listenResultsLock.RUnlock()
-	if res, ok := listenResults[int(i)]; ok {
-		if res.Empty() {
-			return ERR_NO_RESULT_AVAILABLE
-		} else {
-			p := res.Get().Parameter()
-			*params = unsafe.Pointer(C.CString(string(p)))
-			*params_size = C.int(len(p))
-			return C.int(0)
-		}
+//export input_listen_result_params
+func input_listen_result_params(i C.int, params *unsafe.Pointer, params_size *C.int) C.int {
+	p, err := inputs.nextListenResultParameter(i)
+	if err == NO_ERR.asInt() {
+		*params = unsafe.Pointer(C.CBytes(p))
+		*params_size = C.int(len(p))
 	}
-	return ERR_INVALID_INPUT
+	return err
 }
 
-func call_all_result_available(i C.int, uuid *C.char, is *C.int) C.int {
-	callAllResultsLock.RLock()
-	defer callAllResultsLock.RUnlock()
-	if r, ok := callAllResults[int(i)]; ok {
-		if res, ok := r[config.UUID(C.GoString(uuid))]; ok {
-			if res.Empty() {
-				*is = C.int(0)
-			} else {
-				*is = C.int(1)
-			}
-		}
-	}
-	return ERR_INVALID_INPUT
+//export input_listen_result_clear
+func input_listen_result_clear(i C.int) C.int {
+	err := inputs.clearListenResult(i)
+	return err
 }
 
-//export retrieve_next_call_all_result_params
-func retrieve_next_call_all_result_params(i C.int, uuid *C.char, params *unsafe.Pointer, params_size *C.int) C.int {
-	callAllResultsLock.RLock()
-	defer callAllResultsLock.RUnlock()
-	if r, ok := callAllResults[int(i)]; ok {
-		if res, ok := r[config.UUID(C.GoString(uuid))]; ok {
-			if res.Empty() {
-				return ERR_NO_RESULT_AVAILABLE
-			}
-			p := res.Get().Parameter()
-			*params = unsafe.Pointer(C.CString(string(p)))
-			*params_size = C.int(len(p))
-			return C.int(0)
-		}
+//export input_call_all_next_result_available
+func input_call_all_next_result_available(i C.int, res_id *C.char, is_p *C.int) C.int {
+	resID := uuid.UUID(C.GoString(res_id))
+	is, err := inputs.callAllResultAvailable(i, resID)
+	boolToIntPtr(is, is_p)
+	return err
+}
+
+//export input_call_all_next_result_params
+func input_call_all_next_result_params(i C.int, res_id *C.char, params *unsafe.Pointer, params_size *C.int) C.int {
+	resID := uuid.UUID(C.GoString(res_id))
+	p, err := inputs.callAllResultParameter(i, resID)
+	if err == NO_ERR.asInt() {
+		*params = unsafe.Pointer(C.CBytes(p))
+		*params_size = C.int(len(p))
 	}
-	return ERR_INVALID_INPUT
+	return err
+}
+
+//export input_call_all_next_result_clear
+func input_call_all_next_result_clear(i C.int, res_id *C.char) C.int {
+	resID := uuid.UUID(C.GoString(res_id))
+	err := inputs.clearCallAllResult(i, resID)
+	return err
+}
+
+//export input_call_all_request_clear
+func input_call_all_request_clear(i C.int, res_id *C.char) C.int {
+	resID := uuid.UUID(C.GoString(res_id))
+	err := inputs.clearCallAllRequest(i, resID)
+	return err
+}
+
+//export input_property_get
+func input_property_get(i C.int, property *C.char, value_p *unsafe.Pointer, value_size *C.int) C.int {
+	prop := C.GoString(property)
+	p, err := inputs.getProperty(i, prop)
+	if err == NO_ERR.asInt() {
+		*value_p = unsafe.Pointer(C.CBytes(p))
+		*value_size = C.int(len(p))
+	}
+	return err
+}
+
+//export input_property_update
+func input_property_update(i C.int, property *C.char) C.int {
+	prop := C.GoString(property)
+	err := inputs.updateProperty(i, prop)
+	return err
+}
+
+//export input_property_update_available
+func input_property_update_available(i C.int, property *C.char, is_p *C.int) C.int {
+	prop := C.GoString(property)
+	is, err := inputs.propertyUpdateAvailable(i, prop)
+	boolToIntPtr(is, is_p)
+	return err
+}
+
+//export input_property_update_get
+func input_property_update_get(i C.int, property *C.char, value_p *unsafe.Pointer, value_size *C.int) C.int {
+	prop := C.GoString(property)
+	p, err := inputs.getPropertyUpdate(i, prop)
+	if err == NO_ERR.asInt() {
+		*value_p = unsafe.Pointer(C.CBytes(p))
+		*value_size = C.int(len(p))
+	}
+	return err
+}
+
+//export input_change_start_observe
+func input_change_start_observe(i C.int, property *C.char) C.int {
+	return inputs.startObserve(i, C.GoString(property))
+}
+
+//export input_change_stop_observe
+func input_change_stop_observe(i C.int, property *C.char) C.int {
+	return inputs.stopObserve(i, C.GoString(property))
+}
+
+
+//export input_change_available
+func input_change_available(i C.int, is_p *C.int) C.int {
+	is, err := inputs.propertyChanged(i)
+	boolToIntPtr(is, is_p)
+	return err
+}
+
+//export input_change_property
+func input_change_property(i C.int, property **C.char, property_size *C.int) C.int {
+	p, err := inputs.nextChangeProperty(i)
+	if err == NO_ERR.asInt() {
+		*property = C.CString(p)
+		*property_size = C.int(len(p))
+	}
+	return err
+}
+
+//export input_change_value
+func input_change_value(i C.int, value_p *unsafe.Pointer, value_size *C.int) C.int {
+	p, err := inputs.nextChangeValue(i)
+	if err == NO_ERR.asInt() {
+		*value_p = unsafe.Pointer(C.CBytes(p))
+		*value_size = C.int(len(p))
+	}
+	return err
+}
+
+//export input_change_clear
+func input_change_clear(i C.int) C.int {
+	err := inputs.clearNextChange(i)
+	return err
 }

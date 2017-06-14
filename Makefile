@@ -4,7 +4,7 @@ all: libthingiverseio.so
 
 test:
 	mkdir -p _test
-	gcc test/test_shared.c -Iinclude -Lbin -lpthread -lzmq -lthingiverseio -ltvio -o _test/test
+	gcc test/test_shared.c -Iinclude -Lbin -lpthread -lthingiverseio -ltvio -o _test/test
 	./_test/test
 	rm -rf _test
 
@@ -15,10 +15,10 @@ libtvio.so:
 
 tvio.o: libtvio.so
 	mkdir -p build
-	gcc -c src/thingiverseio.c -L./bin/ -I./include/ -fPIC -lpthread -lzmq -ltvio -o build/tvio.o
+	gcc -c src/thingiverseio.c -L./bin/ -I./include/ -fPIC -lpthread -ltvio -o build/tvio.o
 
 libthingiverseio.so: tvio.o
-	gcc -shared -fPIC build/tvio.o -o bin/libthingiverseio.so -lpthread -lzmq -L./bin -ltvio
+	gcc -shared -fPIC build/tvio.o -o bin/libthingiverseio.so -lpthread -L./bin -ltvio
 
 install:
 	cp bin/lib* /usr/lib/

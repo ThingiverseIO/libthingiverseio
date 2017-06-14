@@ -1,6 +1,6 @@
 //	Copyright (c) 2015 Joern Weissenborn
 //
-//	This file is part of libaursir.
+//	This file is part of libthingiverseio.
 //
 //	Foobar is free software: you can redistribute it and/or modify
 //	it under the terms of the GNU General Public License as published by
@@ -13,7 +13,7 @@
 //	GNU General Public License for more details.
 //
 //	You should have received a copy of the GNU General Public License
-//	along with libaursir.  If not, see <http://www.gnu.org/licenses/>.
+//	along with libthingiverseio.  If not, see <http://www.gnu.org/licenses/>.
 
 package main
 
@@ -23,193 +23,348 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/ThingiverseIO/thingiverseio"
 	"github.com/ThingiverseIO/thingiverseio/config"
-	"github.com/ThingiverseIO/thingiverseio/service/messages"
+	"github.com/ThingiverseIO/thingiverseio/core"
+	"github.com/ThingiverseIO/thingiverseio/descriptor"
+	"github.com/ThingiverseIO/thingiverseio/message"
+	"github.com/ThingiverseIO/thingiverseio/uuid"
 )
 
-var nextOutput = 0
+type output struct {
+	m             *sync.RWMutex
+	c             core.OutputCore
+	requests      *message.RequestCollector
+	request_cache map[uuid.UUID]*message.Request
+}
 
-func getNextOutput() (n int) {
-	n = nextOutput
-	nextOutput++
+func newOutput(desc string) (o *output, err C.int) {
+	d, derr := descriptor.Parse(desc)
+	if derr != nil {
+		err = ERR_INVALID_DESCRIPTOR.asInt()
+		return
+	}
+	cfg := config.Configure()
+	tracker, provider := core.DefaultBackends()
+	c, nerr := core.NewOutputCore(d, cfg, tracker, provider...)
+	if nerr != nil {
+		err = ERR_NETWORK.asInt()
+		return
+	}
+	o = &output{
+		m:             &sync.RWMutex{},
+		c:             c,
+		requests:      message.NewRequestCollector(),
+		request_cache: map[uuid.UUID]*message.Request{},
+	}
+	o.requests.AddStream(c.RequestStream())
+	o.c.Run()
 	return
 }
 
-var outputs = map[int]*thingiverseio.Output{}
-var outputLock = &sync.RWMutex{}
+type outputRegister struct {
+	n        int
+	m        *sync.RWMutex
+	register map[C.int]*output
+}
 
-var requestIn = map[int]map[config.UUID]*messages.Request{}
-var requestInLock = &sync.RWMutex{}
-
-var waitingRequests = map[int]*config.UUIDCollector{}
-var waitingRequestsLock = &sync.RWMutex{}
-
-func newOutput(desc string) (n int) {
-	outputLock.Lock()
-	defer outputLock.Unlock()
-	requestInLock.Lock()
-	defer requestInLock.Unlock()
-	waitingRequestsLock.Lock()
-	defer waitingRequestsLock.Unlock()
-	n = getNextOutput()
-	e, err := thingiverseio.NewOutput(desc)
-	if err != nil {
-		return -1
-	}
-	outputs[n] = e
-	requestIn[n] = map[config.UUID]*messages.Request{}
-	waitingRequests[n] = config.NewUUIDCollector()
-	e.Requests().Listen(getRequest(n))
-	e.Run()
+func (o *outputRegister) next() (n int) {
+	n = o.n
+	o.n++
 	return
 }
 
-func getRequest(n int) messages.RequestSubscriber {
-	return func(r *messages.Request) {
-		requestInLock.Lock()
-		defer requestInLock.Unlock()
-		waitingRequestsLock.Lock()
-		defer waitingRequestsLock.Unlock()
-		waitingRequests[n].Add(r.UUID)
-		requestIn[n][r.UUID] = r
+func (o *outputRegister) new(desc string) (idOrErr C.int) {
+	o.m.Lock()
+	defer o.m.Unlock()
+	out, idOrErr := newOutput(desc)
+	if idOrErr != NO_ERR.asInt() {
+		return
 	}
+	idOrErr = C.int(o.next())
+	o.register[idOrErr] = out
+	return
+}
+
+func (o *outputRegister) connected(id C.int) (is bool, err C.int) {
+	o.m.Lock()
+	defer o.m.Unlock()
+	out, ok := o.register[id]
+	if !ok {
+		err = ERR_INVALID_OUTPUT.asInt()
+		return
+	}
+	is = out.c.Connected()
+	return
+}
+
+func (o *outputRegister) iface(id C.int) (iface string, err C.int) {
+	o.m.Lock()
+	defer o.m.Unlock()
+	out, ok := o.register[id]
+	if !ok {
+		err = ERR_INVALID_OUTPUT.asInt()
+		return
+	}
+	iface = out.c.Interface()
+	return
+}
+
+func (o *outputRegister) uuid(id C.int) (iID uuid.UUID, err C.int) {
+	o.m.Lock()
+	defer o.m.Unlock()
+	out, ok := o.register[id]
+	if !ok {
+		err = ERR_INVALID_OUTPUT.asInt()
+		return
+	}
+	iID = out.c.UUID()
+	return
+}
+
+func (o *outputRegister) remove(id C.int) (err C.int) {
+	o.m.Lock()
+	defer o.m.Unlock()
+	out, ok := o.register[id]
+	if !ok {
+		err = ERR_INVALID_OUTPUT.asInt()
+		return
+	}
+	out.c.Shutdown()
+	delete(o.register, id)
+	return
+}
+
+func (o *outputRegister) requestAvailable(id C.int) (is bool, err C.int) {
+
+	o.m.Lock()
+	defer o.m.Unlock()
+	out, ok := o.register[id]
+	if !ok {
+		err = ERR_INVALID_OUTPUT.asInt()
+		return
+	}
+
+	is = !out.requests.Empty()
+	return
+
+}
+
+func (o *outputRegister) nextRequestUUID(id C.int) (reqID uuid.UUID, err C.int) {
+
+	o.m.RLock()
+	defer o.m.RUnlock()
+	out, ok := o.register[id]
+	if !ok {
+		err = ERR_INVALID_OUTPUT.asInt()
+		return
+	}
+
+	if out.requests.Empty() {
+		err = ERR_NO_REQUEST_AVAILABLE.asInt()
+		return
+	}
+	out.m.Lock()
+	defer out.m.Unlock()
+	req := out.requests.Get()
+	reqID = req.UUID
+	out.request_cache[reqID] = req
+	return
+}
+
+func (o *outputRegister) nextRequestFunction(id C.int, reqID uuid.UUID) (function string, err C.int) {
+	o.m.RLock()
+	defer o.m.RUnlock()
+	out, ok := o.register[id]
+	if !ok {
+		err = ERR_INVALID_OUTPUT.asInt()
+		return
+	}
+	out.m.RLock()
+	defer out.m.RUnlock()
+	req, ok := out.request_cache[reqID]
+	if !ok {
+		err = ERR_INVALID_REQUEST_ID.asInt()
+		return
+	}
+	function = req.Function
+	return
+}
+
+func (o *outputRegister) nextRequestParameter(id C.int, reqID uuid.UUID) (params []byte, err C.int) {
+	o.m.RLock()
+	defer o.m.RUnlock()
+	out, ok := o.register[id]
+	if !ok {
+		err = ERR_INVALID_OUTPUT.asInt()
+		return
+	}
+	out.m.RLock()
+	defer out.m.RUnlock()
+	req, ok := out.request_cache[reqID]
+	if !ok {
+		err = ERR_INVALID_REQUEST_ID.asInt()
+		return
+	}
+	params = req.Parameter()
+	return
+}
+
+func (o *outputRegister) reply(id C.int, reqID uuid.UUID, params []byte) (err C.int) {
+	o.m.RLock()
+	defer o.m.RUnlock()
+	out, ok := o.register[id]
+	if !ok {
+		err = ERR_INVALID_OUTPUT.asInt()
+		return
+	}
+	out.m.Lock()
+	defer out.m.Unlock()
+	req, ok := out.request_cache[reqID]
+	if !ok {
+		err = ERR_INVALID_REQUEST_ID.asInt()
+		return
+	}
+	out.c.Reply(req, params)
+	delete(out.request_cache, reqID)
+	return
+}
+
+func (o *outputRegister) emit(id C.int, function string, in_params []byte, out_params []byte) (err C.int) {
+	o.m.RLock()
+	defer o.m.RUnlock()
+	out, ok := o.register[id]
+	if !ok {
+		err = ERR_INVALID_OUTPUT.asInt()
+		return
+	}
+	ferr := out.c.Emit(function, in_params, out_params)
+	if ferr != nil {
+		err = ERR_INVALID_FUNCTION.asInt()
+		return
+	}
+	return
+}
+
+func (o *outputRegister) setProperty(id C.int, property string, value []byte) (err C.int) {
+	o.m.RLock()
+	defer o.m.RUnlock()
+	out, ok := o.register[id]
+	if !ok {
+		err = ERR_INVALID_OUTPUT.asInt()
+		return
+	}
+	perr := out.c.SetProperty(property, value)
+	if perr != nil {
+		err = ERR_INVALID_PROPERTY.asInt()
+		return
+	}
+	return
+}
+
+var outputs = outputRegister{
+	m:        &sync.RWMutex{},
+	register: map[C.int]*output{},
 }
 
 //export new_output
 func new_output(descriptor *C.char) C.int {
 	d := C.GoString(descriptor)
-	return C.int(newOutput(d))
+	return outputs.new(d)
 }
 
-//export remove_output
-func remove_output(o C.int) C.int {
-	outputLock.Lock()
-	defer outputLock.Unlock()
-	requestInLock.Lock()
-	defer requestInLock.Unlock()
-	waitingRequestsLock.Lock()
-	defer waitingRequestsLock.Unlock()
-	if out, ok := outputs[int(o)]; ok {
-		out.Remove()
-		delete(outputs, int(o))
-		delete(requestIn, int(o))
-		waitingRequests[int(o)].Remove()
-		delete(waitingRequests, int(o))
-		return C.int(0)
-	}
-	return ERR_INVALID_OUTPUT
+//export output_remove
+func output_remove(o C.int) C.int {
+	return outputs.remove(o)
 }
 
-//export get_output_uuid
-func get_output_uuid(o C.int, uuid **C.char, uuid_size *C.int) C.int {
-	outputLock.RLock()
-	defer outputLock.RUnlock()
-	if out, ok := inputs[int(o)]; ok {
-		*uuid = C.CString(string(out.UUID()))
-		*uuid_size = C.int(len(out.UUID()))
-		return C.int(0)
-	}
-	return ERR_INVALID_OUTPUT
+//export output_connected
+func output_connected(o C.int, is_p *C.int) C.int {
+	is, err := outputs.connected(o)
+	boolToIntPtr(is, is_p)
+	return err
 }
 
-//export get_output_interface
-func get_output_interface(o C.int, iface **C.char, iface_size *C.int) C.int {
-	outputLock.RLock()
-	defer outputLock.RUnlock()
-	if out, ok := inputs[int(o)]; ok {
-		*iface = C.CString(string(out.UUID()))
-		*iface_size = C.int(len(out.UUID()))
-		return C.int(0)
+//export output_uuid
+func output_uuid(o C.int, uuid_p **C.char, uuid_size *C.int) C.int {
+	uuid, err := outputs.uuid(o)
+	if err == NO_ERR.asInt() {
+		*uuid_p = C.CString(string(uuid))
+		*uuid_size = C.int(len(uuid))
 	}
-	return ERR_INVALID_OUTPUT
+	return err
 }
 
-//export get_next_request_id
-func get_next_request_id(o C.int, uuid **C.char, uuid_size *C.int) C.int {
-	waitingRequestsLock.RLock()
-	defer waitingRequestsLock.RUnlock()
-	if waiting, ok := waitingRequests[int(o)]; ok {
-		if !waiting.Empty() {
-			*uuid = C.CString(string(waiting.Preview()))
-			*uuid_size = C.int(len(waiting.Get()))
-		}
-		return C.int(0)
+//export output_interface
+func output_interface(o C.int, iface_p **C.char, iface_size *C.int) C.int {
+
+	iface, err := outputs.iface(o)
+	if err == 0 {
+		*iface_p = C.CString(iface)
+		*iface_size = C.int(len(iface))
 	}
-	return ERR_INVALID_OUTPUT
+	return err
 }
 
-//export request_available
-func request_available(o C.int, is *C.int) C.int {
-	waitingRequestsLock.RLock()
-	defer waitingRequestsLock.RUnlock()
-	if waiting, ok := waitingRequests[int(o)]; ok {
-		if !waiting.Empty() {
-			*is = C.int(1)
-		} else {
-			*is = C.int(0)
-		}
-		return C.int(0)
+//export output_request_id
+func output_request_id(o C.int, req_id **C.char, req_id_size *C.int) C.int {
+	reqID, err := outputs.nextRequestUUID(o)
+	if err == NO_ERR.asInt() {
+		*req_id = C.CString(string(reqID))
+		*req_id_size = C.int(len(reqID))
 	}
-	return ERR_INVALID_OUTPUT
+	return err
 }
 
-//export retrieve_request_function
-func retrieve_request_function(o C.int, uuid *C.char, function **C.char, function_size *C.int) C.int {
-	requestInLock.RLock()
-	defer requestInLock.RUnlock()
-	if r, ok := requestIn[int(o)][config.UUID(C.GoString(uuid))]; ok {
-		*function = C.CString(r.Function)
-		*function_size = C.int(len(r.Function))
-		return C.int(0)
-	}
-	return ERR_INVALID_OUTPUT
+//export output_request_available
+func output_request_available(o C.int, is_p *C.int) C.int {
+	is, err := outputs.requestAvailable(o)
+	boolToIntPtr(is, is_p)
+	return err
 }
 
-//export retrieve_request_params
-func retrieve_request_params(o C.int, uuid *C.char, parameter *unsafe.Pointer, parameter_size *C.int) C.int {
-	requestInLock.RLock()
-	defer requestInLock.RUnlock()
-	if r, ok := requestIn[int(o)][config.UUID(C.GoString(uuid))]; ok {
-		*parameter = unsafe.Pointer(C.CString(string(r.Parameter())))
-		*parameter_size = C.int(len(r.Parameter()))
-		return C.int(0)
+//export output_request_function
+func output_request_function(o C.int, req_id *C.char, function **C.char, function_size *C.int) C.int {
+	reqID := uuid.UUID(C.GoString(req_id))
+	fun, err := outputs.nextRequestFunction(o, reqID)
+	if err == NO_ERR.asInt() {
+		*function = C.CString(fun)
+		*function_size = C.int(len(fun))
 	}
-	return ERR_INVALID_OUTPUT
+	return err
 }
 
-//export reply
-func reply(o C.int, uuid *C.char, parameter unsafe.Pointer, parameter_size C.int) C.int {
-	outputLock.RLock()
-	defer outputLock.RUnlock()
-	requestInLock.Lock()
-	defer requestInLock.Unlock()
-	out := outputs[int(o)]
-	if out == nil {
-		return ERR_INVALID_OUTPUT
+//export output_request_params
+func output_request_params(o C.int, req_id *C.char, params *unsafe.Pointer, params_size *C.int) C.int {
+	reqID := uuid.UUID(C.GoString(req_id))
+	p, err := outputs.nextRequestParameter(o, reqID)
+	if err == NO_ERR.asInt() {
+		*params = unsafe.Pointer(C.CBytes(p))
+		*params_size = C.int(len(p))
 	}
-	r := requestIn[int(o)][config.UUID(C.GoString(uuid))]
-	if r != nil {
-		params := getParams(parameter, parameter_size)
-		out.ReplyEncoded(r, params)
-		delete(requestIn[int(o)], config.UUID(C.GoString(uuid)))
-		return C.int(0)
-	}
-	return ERR_INVALID_REQUEST_ID
+	return err
 }
 
-//export emit
-func emit(o C.int, function *C.char, inparameter unsafe.Pointer, inparameter_size C.int, outparameter unsafe.Pointer, outparameter_size C.int) C.int {
-	outputLock.RLock()
-	defer outputLock.RUnlock()
-	out := outputs[int(o)]
-	if out != nil {
-		out.EmitEncoded(
-			C.GoString(function),
-			getParams(inparameter, inparameter_size),
-			getParams(outparameter, outparameter_size),
-		)
-		return C.int(0)
-	}
-	return ERR_INVALID_OUTPUT
+//export output_reply
+func output_reply(o C.int, req_id *C.char, params unsafe.Pointer, params_size C.int) C.int {
+	reqID := uuid.UUID(C.GoString(req_id))
+	parameter := getParams(params, params_size)
+	err := outputs.reply(o, reqID, parameter)
+	return err
+}
+
+//export output_emit
+func output_emit(o C.int, function *C.char, in_params unsafe.Pointer, in_params_size C.int, out_params unsafe.Pointer, out_params_size C.int) C.int {
+	fun := C.GoString(function)
+	inParams := getParams(in_params, in_params_size)
+	outParams := getParams(out_params, out_params_size)
+	err := outputs.emit(o, fun, inParams, outParams)
+	return err
+}
+
+//export output_property_set
+func output_property_set(o C.int, property *C.char, value_p unsafe.Pointer, value_size C.int) C.int {
+	prop := C.GoString(property)
+	value := getParams(value_p, value_size)
+	err := outputs.setProperty(o, prop, value)
+	return err
 }
