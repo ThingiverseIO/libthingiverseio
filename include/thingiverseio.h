@@ -306,16 +306,6 @@ extern int tvio_input_call_all_next_result_available(int input, int* is);
 extern int tvio_input_call_all_next_result_params(int input, char* id, void** params, int* params_size);
 
 /**
- * @brief Clears the CALL-ALL request.
- *
- * @param input The input reference.
- * @param id The UUID of the request.
- *
- * @return error
- */
-extern int tvio_input_call_all_request_clear(int input, char* id);
-
-/**
  * @brief Clears the next CALL-ALL result. Must be called to receive further results.
  *
  * @param input The input reference.
@@ -324,6 +314,16 @@ extern int tvio_input_call_all_request_clear(int input, char* id);
  * @return error
  */
 extern int tvio_input_call_all_next_result_clear(int input, char* id);
+
+/**
+ * @brief Clears the CALL-ALL request.
+ *
+ * @param input The input reference.
+ * @param id The UUID of the request.
+ *
+ * @return error
+ */
+extern int tvio_input_call_all_request_clear(int input, char* id);
 
 /**
  * @brief Gets the MsgPack serialized value of a property.
@@ -356,7 +356,7 @@ extern int tvio_input_property_update(int input, char* property);
  *
  * @return error
  */
-extern int tvio_input_property_update_available(int input, char* property, int* property_size);
+extern int tvio_input_property_update_available(int input, int* is);
 
 /**
  * @brief Gets the MsgPack serialized value of a property update.
