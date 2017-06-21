@@ -356,7 +356,7 @@ extern int tvio_input_property_update(int input, char* property);
  *
  * @return error
  */
-extern int tvio_input_property_update_available(int input, int* is);
+extern int tvio_input_property_update_available(int input, char* property, int* is);
 
 /**
  * @brief Gets the MsgPack serialized value of a property update.
