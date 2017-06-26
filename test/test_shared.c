@@ -1,19 +1,25 @@
 #include<stdio.h>
 #include "thingiverseio.h"
 
-  char * const DESCRIPTOR = "function SayHello(Greeting string) (Answer string)";
+  char * const DESCRIPTOR = "function SayHello(Greeting string) (Answer string)\n"
+  			    "property testprop: Mood string";
 
   int main() {
+
+
+	  printf("descriptor:\n\n");
+	  printf(DESCRIPTOR);
+	  printf("\n\n");
 
 	printf("Testing Input Creation...\n");
 
 	int input = tvio_new_input(DESCRIPTOR);
 
-	if (input == -1) {
-		printf("FAIL\n");
+	if (input < 0) {
+		printf("FAIL create input err %d\n", input);
 		return 1;
 	};
-	printf("SUCCESS\n");
+	printf("SUCCESS, Input id is %d\n", input);
 
 	printf("Testing Output Creation...\n");
 
@@ -130,7 +136,7 @@
 		return 1;
 	};
 
-	printf("SUCCES\n");
+	printf("SUCCESS\n");
 
 	printf("Testing Trigger...\n");
 
@@ -147,7 +153,7 @@
 		printf("FAIL, tvio_trigger err not 0\n");
 		return 1;
 	};
-	sleep(5);
+	sleep(1);
 
 	err = tvio_output_request_id(output, &req_uuid, &req_uuid_size);
 	if (err != 0) {
@@ -187,9 +193,46 @@
 		return 1;
 	};
 
+	printf("SUCCESS\n");
+
+	printf("Testing Observe...\n");
+
+	char* prop = "testprop";
+
+	err = tvio_output_property_set(output, prop, params,params_size);
+	if (err != 0) {
+		printf("FAIL, tvio_trigger err not 0\n");
+		return 1;
+	};
+	err = tvio_input_change_start_observe(input, prop);
+	if (err != 0) {
+		printf("FAIL, tvio_input_change_start_observe err %d\n", err);
+		return 1;
+	};
+
+	sleep(1);
+
+	err = tvio_input_change_available(input, &ready);
+	if (err != 0) {
+		printf("FAIL,tvio_change_available err not 0\n");
+		return 1;
+	};
+	if (ready != 1) {
+		printf("FAIL,tvio_change_available hasnt arrived\n");
+		return 1;
+	}
+	err = tvio_input_change_value(input, &resultparams, &resultparams_size);
+	if (err != 0) {
+		printf("FAIL,tvio_change_value err not 0\n");
+		return 1;
+	};
+	if (resultparams_size != 5) {
+		printf("FAIL, property value size is %d, not %d\n", resultparams_size, 5);
+		return 1;
+	};
 	err = tvio_input_remove(input);
 	if (err != 0) {
-		printf("FAIL, tvio_remove_input err not 0\n");
+		printf("FAIL, tvio_remove_input err %d\n", err);
 		return 1;
 	};
 
@@ -198,7 +241,6 @@
 		printf("FAIL, tvio_remove_input err not 0\n");
 		return 1;
 	};
-	printf("SUCCES\n");
-
+	printf("SUCCESS\n");
 	return 0;
 }

@@ -1,13 +1,13 @@
-//	Copyright (c) 2015 Joern Weissenborn
+//	Copyright (c) 2017 Joern Weissenborn
 //
 //	This file is part of libthingiverseio.
 //
-//	Foobar is free software: you can redistribute it and/or modify
+//	libthingiverseio is free software: you can redistribute it and/or modify
 //	it under the terms of the GNU General Public License as published by
 //	the Free Software Foundation, either version 3 of the License, or
 //	(at your option) any later version.
 //
-//	libaursir is distributed in the hope that it will be useful,
+//	libthingiverseio is distributed in the hope that it will be useful,
 //	but WITHOUT ANY WARRANTY; without even the implied warranty of
 //	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 //	GNU General Public License for more details.
@@ -24,7 +24,7 @@ import "C"
 type tvio_err C.int
 
 const (
-	NO_ERR tvio_err = iota
+	NO_ERR tvio_err = -1 * iota
 	ERR_NETWORK
 	ERR_INVALID_DESCRIPTOR
 	ERR_INVALID_INPUT
@@ -67,6 +67,6 @@ func (err tvio_err) String() (s string) {
 	return
 }
 
-func (err tvio_err) asInt() C.int{
+func (err tvio_err) asInt() C.int {
 	return C.int(err)
 }
