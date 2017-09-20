@@ -71,7 +71,7 @@
 	int req_uuid_size;
 	err = tvio_output_request_id(output, &req_uuid, &req_uuid_size);
 	if (err != 0) {
-		printf("FAIL, err not 0\n");
+		printf("FAIL, err not 0: %d\n, err");
 		return 1;
 	};
 	if (req_uuid_size != 36) {
