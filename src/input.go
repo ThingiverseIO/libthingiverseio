@@ -27,7 +27,7 @@ import (
 	"github.com/ThingiverseIO/thingiverseio/core"
 	"github.com/ThingiverseIO/thingiverseio/descriptor"
 	"github.com/ThingiverseIO/thingiverseio/message"
-	"github.com/ThingiverseIO/thingiverseio/uuid"
+	"github.com/ThingiverseIO/uuid"
 	"github.com/joernweissenborn/eventual2go"
 )
 
@@ -402,7 +402,7 @@ func (i *inputRegister) callAll(id C.int, function string, params []byte) (resID
 	defer in.m.Unlock()
 	in.callall[resID] = message.NewResultCollector()
 	in.callall[resID].AddStream(res)
-	res.CloseOnFuture(in.callall[resID].Removed())
+	res.CloseOnFuture(in.callall[resID].Stopped())
 	return
 }
 
@@ -670,7 +670,7 @@ func (i *inputRegister) clearCallAllRequest(id C.int, resID uuid.UUID) (err C.in
 		err = ERR_INVALID_RESULT_ID.asInt()
 		return
 	}
-	res.Remove()
+	res.Stopped()
 	delete(in.callall, resID)
 	return
 
