@@ -1,4 +1,7 @@
 doc
+bin/
+.direnv/
+.envrc
 
 input_call
 input_trigger

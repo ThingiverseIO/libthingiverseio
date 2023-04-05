@@ -1,7 +1,7 @@
 /** @example input_call.c
  * Example showing a ThingiverseIO CALL.
  */
-#include "thingiverseio.h"
+#include "tvio.h"
 #include <stdio.h>
 #include <unistd.h>
 #include <msgpack.h>
@@ -12,7 +12,7 @@ tag example_tag\
 ";
 
 int main() {
-	int input = tvio_new_input(DESCRIPTOR);
+	int input = new_input(DESCRIPTOR);
 	if (input == -1) {
 		printf("Failed to create input\n");
 		return 1;
@@ -37,14 +37,14 @@ int main() {
 	char * req_uuid;
 	int req_uuid_size;
 
-	tvio_call(input, "SayHello", sbuf.data, sbuf.size, &req_uuid, &req_uuid_size);
+	call(input, "SayHello", sbuf.data, sbuf.size, &req_uuid, &req_uuid_size);
 
 	printf("Waiting for Answer...");
 
 	int received = 0;
 
 	while (received == 0){
-		tvio_result_ready(input, req_uuid, &received);
+		result_ready(input, req_uuid, &received);
 		printf(".");
 		sleep(1);
 	}
@@ -53,7 +53,7 @@ int main() {
 	void * rparams;
 	int rparams_size;
 
-	err = tvio_retrieve_result_params(input, req_uuid, &rparams, &rparams_size);
+	err = retrieve_result_params(input, req_uuid, &rparams, &rparams_size);
 
 	msgpack_zone mempool;
 	msgpack_object deserialized;

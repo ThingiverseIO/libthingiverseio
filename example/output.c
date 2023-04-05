@@ -1,7 +1,7 @@
 /** @example output.c
  * Example showing a ThingiverseIO Output.
  */
-#include "thingiverseio.h"
+#include "tvio.h"
 #include <unistd.h>
 #include <stdio.h>
 #include <msgpack.h>
@@ -13,7 +13,7 @@ tag example_tag\
 
 int main() {
 
-	int output = tvio_new_output(DESCRIPTOR);
+	int output = new_output(DESCRIPTOR);
 	if (output == -1) {
 		printf("Failed to create output\n");
 		return 1;
@@ -24,7 +24,7 @@ int main() {
 
 	while (1) {
 
-		err = tvio_request_available(output, &res_available);
+		err = request_available(output, &res_available);
 		if (err != 0) {
 			printf("ERROR");
 			return err;
@@ -34,7 +34,7 @@ int main() {
 
 			char * req_uuid;
 			int req_uuid_size;
-			err = tvio_get_next_request_id(output, &req_uuid, &req_uuid_size);
+			err = get_next_request_id(output, &req_uuid, &req_uuid_size);
 			if (err != 0) {
 				printf("ERROR");
 				return err;
@@ -44,7 +44,7 @@ int main() {
 
 			char * rfun;
 			int rfun_size;
-			err = tvio_retrieve_request_function(output, req_uuid, &rfun, &rfun_size);
+			err = retrieve_request_function(output, req_uuid, &rfun, &rfun_size);
 			if (err != 0) {
 				printf("ERROR");
 				return err;
@@ -54,13 +54,13 @@ int main() {
 			if (strcmp(rfun,"SayHello") != 0) {
 				printf("Can't deal with this function name\n");
 				// Reply with empty params to flush the request.
-				tvio_reply(output, req_uuid, NULL, 0);
+				reply(output, req_uuid, NULL, 0);
 				continue;
 			}
 
 			void * rparams;
 			int rparams_size;
-			err = tvio_retrieve_request_params(output, req_uuid, &rparams, &rparams_size);
+			err = retrieve_request_params(output, req_uuid, &rparams, &rparams_size);
 			if (err != 0) {
 				printf("ERROR");
 				return err;
@@ -72,7 +72,7 @@ int main() {
 			msgpack_zone_init(&mempool, 2048);
 
 			err = msgpack_unpack(rparams, rparams_size, NULL, &mempool, &deserialized);
-			
+
 			free(rparams);
 			printf("Request parameters are: \n");
 			msgpack_object_print(stderr, deserialized);
@@ -90,7 +90,7 @@ int main() {
 			msgpack_pack_str(&pk,15);
 			msgpack_pack_str_body(&pk,"Greetings back!",15);
 
-			err = tvio_reply(output, req_uuid, sbuf.data, sbuf.size);
+			err = reply(output, req_uuid, sbuf.data, sbuf.size);
 			if (err != 0) {
 				printf("ERROR");
 				return err;

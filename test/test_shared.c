@@ -1,5 +1,5 @@
 #include<stdio.h>
-#include "thingiverseio.h"
+#include "libtvio.h"
 
   char * const DESCRIPTOR = "function SayHello(Greeting string) (Answer string)\n"
   			    "property testprop: Mood string";
@@ -13,7 +13,7 @@
 
 	printf("Testing Input Creation...\n");
 
-	int input = tvio_new_input(DESCRIPTOR);
+	int input = new_input(DESCRIPTOR);
 
 	if (input < 0) {
 		printf("FAIL create input err %d\n", input);
@@ -23,7 +23,7 @@
 
 	printf("Testing Output Creation...\n");
 
-	int output = tvio_new_output(DESCRIPTOR);
+	int output = new_output(DESCRIPTOR);
 
 	if (output == -1) {
 		printf("FAIL\n");
@@ -34,7 +34,7 @@
 
 	sleep(5);
 	int is;
-	int err = tvio_input_connected(input, &is);
+	int err = input_connected(input, &is);
 	if (err != 0) {
 		printf("FAIL input connected err %d\n", err);
 		return 1;
@@ -55,7 +55,7 @@
 	char * params = "HELLO";
 	int params_size = 5;
 
-	err = tvio_input_call(input, fun,params,params_size, &uuid, &uuid_size);
+	err = input_call(input, fun,params,params_size, &uuid, &uuid_size);
 	if (err != 0) {
 		printf("FAIL input call err %d\n", err);
 		return 1;
@@ -69,7 +69,7 @@
 
 	char * req_uuid;
 	int req_uuid_size;
-	err = tvio_output_request_id(output, &req_uuid, &req_uuid_size);
+	err = output_request_id(output, &req_uuid, &req_uuid_size);
 	if (err != 0) {
 		printf("FAIL, err not 0: %d\n, err");
 		return 1;
@@ -81,7 +81,7 @@
 
 	char * rfun;
 	int rfun_size;
-	err = tvio_output_request_function(output, uuid, &rfun, &rfun_size);
+	err = output_request_function(output, uuid, &rfun, &rfun_size);
 	if (err != 0) {
 		printf("FAIL, err not 0\n");
 		return 1;
@@ -92,7 +92,7 @@
 	};
 	void * rparams;
 	int rparams_size;
-	err = tvio_output_request_params(output, uuid, &rparams, &rparams_size);
+	err = output_request_params(output, uuid, &rparams, &rparams_size);
 	if (err != 0) {
 		printf("FAIL, err not 0\n");
 		return 1;
@@ -105,7 +105,7 @@
 	void * resparams = "HELLO_BACK";
 	int resparams_size = 10;
 
-	err = tvio_output_reply(output, uuid, resparams, resparams_size);
+	err = output_reply(output, uuid, resparams, resparams_size);
 	if (err != 0) {
 		printf("FAIL, err not 0\n");
 		return 1;
@@ -114,7 +114,7 @@
 	sleep(1);
 
 	int ready;
-	err = tvio_input_call_result_available(input, uuid, &ready);
+	err = input_call_result_available(input, uuid, &ready);
 	if (err != 0) {
 		printf("FAIL, err not 0\n");
 		return 1;
@@ -126,7 +126,7 @@
 
 	void * resultparams;
 	int resultparams_size;
-	err = tvio_input_call_result_params(input, uuid, &resultparams, &resultparams_size);
+	err = input_call_result_params(input, uuid, &resultparams, &resultparams_size);
 	if (err != 0) {
 		printf("FAIL, err not 0\n");
 		return 1;
@@ -140,22 +140,22 @@
 
 	printf("Testing Trigger...\n");
 
-	err = tvio_input_listen_start(input, fun);
+	err = input_listen_start(input, fun);
 	if (err != 0) {
-		printf("FAIL, tvio_start_listen err not 0\n");
+		printf("FAIL, start_listen err not 0\n");
 		return 1;
 	};
 
 	sleep(1);
 
-	err = tvio_input_trigger(input, fun,params,params_size);
+	err = input_trigger(input, fun,params,params_size);
 	if (err != 0) {
-		printf("FAIL, tvio_trigger err not 0\n");
+		printf("FAIL, trigger err not 0\n");
 		return 1;
 	};
 	sleep(1);
 
-	err = tvio_output_request_id(output, &req_uuid, &req_uuid_size);
+	err = output_request_id(output, &req_uuid, &req_uuid_size);
 	if (err != 0) {
 		printf("FAIL, get_gext_req err not 0\n");
 		return 1;
@@ -165,27 +165,27 @@
 		return 1;
 	};
 
-	err = tvio_output_reply(output, req_uuid, resparams, resparams_size);
+	err = output_reply(output, req_uuid, resparams, resparams_size);
 	if (err != 0) {
-		printf("FAIL, tvio_reply err not 0, is \n");
+		printf("FAIL, reply err not 0, is \n");
 		return 1;
 	};
 
 	sleep(1);
 
-	err = tvio_input_listen_result_available(input, &ready);
+	err = input_listen_result_available(input, &ready);
 	if (err != 0) {
-		printf("FAIL,tvio_listen_result_available err not 0\n");
+		printf("FAIL,listen_result_available err not 0\n");
 		return 1;
 	};
 	if (ready != 1) {
-		printf("FAIL,tvio_listen_result_available result hasnt arrived\n");
+		printf("FAIL,listen_result_available result hasnt arrived\n");
 		return 1;
 	}
 
-	err = tvio_input_listen_result_params(input, &resultparams, &resultparams_size);
+	err = input_listen_result_params(input, &resultparams, &resultparams_size);
 	if (err != 0) {
-		printf("FAIL,tvio_retrieve_listen_result_params err not 0\n");
+		printf("FAIL,retrieve_listen_result_params err not 0\n");
 		return 1;
 	};
 	if (resultparams_size != 10) {
@@ -199,46 +199,46 @@
 
 	char* prop = "testprop";
 
-	err = tvio_output_property_set(output, prop, params,params_size);
+	err = output_property_set(output, prop, params,params_size);
 	if (err != 0) {
-		printf("FAIL, tvio_trigger err not 0\n");
+		printf("FAIL, trigger err not 0\n");
 		return 1;
 	};
-	err = tvio_input_change_start_observe(input, prop);
+	err = input_change_start_observe(input, prop);
 	if (err != 0) {
-		printf("FAIL, tvio_input_change_start_observe err %d\n", err);
+		printf("FAIL, input_change_start_observe err %d\n", err);
 		return 1;
 	};
 
 	sleep(1);
 
-	err = tvio_input_change_available(input, &ready);
+	err = input_change_available(input, &ready);
 	if (err != 0) {
-		printf("FAIL,tvio_change_available err not 0\n");
+		printf("FAIL,change_available err not 0\n");
 		return 1;
 	};
 	if (ready != 1) {
-		printf("FAIL,tvio_change_available hasnt arrived\n");
+		printf("FAIL,change_available hasnt arrived\n");
 		return 1;
 	}
-	err = tvio_input_change_value(input, &resultparams, &resultparams_size);
+	err = input_change_value(input, &resultparams, &resultparams_size);
 	if (err != 0) {
-		printf("FAIL,tvio_change_value err not 0\n");
+		printf("FAIL,change_value err not 0\n");
 		return 1;
 	};
 	if (resultparams_size != 5) {
 		printf("FAIL, property value size is %d, not %d\n", resultparams_size, 5);
 		return 1;
 	};
-	err = tvio_input_remove(input);
+	err = input_remove(input);
 	if (err != 0) {
-		printf("FAIL, tvio_remove_input err %d\n", err);
+		printf("FAIL, remove_input err %d\n", err);
 		return 1;
 	};
 
-	err = tvio_output_remove(output);
+	err = output_remove(output);
 	if (err != 0) {
-		printf("FAIL, tvio_remove_input err not 0\n");
+		printf("FAIL, remove_input err not 0\n");
 		return 1;
 	};
 	printf("SUCCESS\n");
