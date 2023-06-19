@@ -3,9 +3,9 @@ module github.com/ThingiverseIO/libthingiverseio
 go 1.20
 
 require (
-	github.com/ThingiverseIO/thingiverseio v0.0.0-20230405154216-9c6df0d5f9e4
+	github.com/ThingiverseIO/thingiverseio v0.0.0-20230619165724-aaa3ea781717
 	github.com/ThingiverseIO/uuid v0.0.0-20171108183054-8faf82fb5dbb
-	github.com/joernweissenborn/eventual2go v0.0.0-20180118201520-b1f166ca449e
+	github.com/joernweissenborn/eventual2go v0.1.0
 )
 
 require (
@@ -33,7 +33,7 @@ require (
 	github.com/spf13/jwalterweatherman v0.0.0-20170901151539-12bd96e66386 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
 	github.com/spf13/viper v1.0.0 // indirect
-	github.com/ugorji/go v0.0.0-20170918222552-54210f4e076c // indirect
+	github.com/ugorji/go/codec v1.2.11 // indirect
 	golang.org/x/net v0.4.0 // indirect
 	golang.org/x/sys v0.3.0 // indirect
 	golang.org/x/text v0.5.0 // indirect
